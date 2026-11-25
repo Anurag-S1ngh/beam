@@ -20,8 +20,10 @@
 
 import itertools
 import json
+import math
 import os
 import random
+import statistics
 import tempfile
 import time
 import unittest
@@ -1464,6 +1466,179 @@ class CombinerWithSideInputs(unittest.TestCase):
           | beam.CombinePerKey(
               sum_with_floor, min_value=pvalue.AsSingleton(min_value)))
       assert_that(res, equal_to([('k', 53), ('k', 1303)]))
+
+
+class StatisticalCombinersTest(unittest.TestCase):
+  def test_variance_combine_fn(self):
+    values = [10.0, 20.0, 30.0, 40.0, 50.0]
+    for sample, expected in ((True, statistics.variance(values)),
+                             (False, statistics.pvariance(values))):
+      combine_fn = combine.VarianceCombineFn(sample)
+      accumulators = [
+          combine_fn.add_input(combine_fn.create_accumulator(), value)
+          for value in values
+      ]
+      for ordering in itertools.permutations(accumulators):
+        accumulator = combine_fn.merge_accumulators(ordering)
+        self.assertAlmostEqual(combine_fn.extract_output(accumulator), expected)
+      stddev_fn = combine.StandardDeviationCombineFn(sample)
+      self.assertAlmostEqual(
+          stddev_fn.extract_output(accumulator), math.sqrt(expected))
+
+  def test_variance_combine_fn_numerical_stability(self):
+    values = [1e12 + offset for offset in (1, 2, 3, 4, 5)]
+    combine_fn = combine.VarianceCombineFn()
+    accumulator = combine_fn.create_accumulator()
+    for value in values:
+      accumulator = combine_fn.add_input(accumulator, value)
+    self.assertAlmostEqual(
+        combine_fn.extract_output(accumulator),
+        statistics.variance(values),
+        places=3)
+
+  def test_statistical_combiners_globally(self):
+    values = [10.0, 20.0, 30.0, 40.0, 50.0]
+    with TestPipeline() as pipeline:
+      numbers = pipeline | 'CreateNumbers' >> Create(values)
+      assert_that(
+          numbers | 'Variance' >> combine.Variance.Globally(),
+          equal_to([statistics.variance(values)]),
+          label='assert:Variance')
+      assert_that(
+          numbers
+          | 'PopulationVariance' >> combine.Variance.Globally(sample=False),
+          equal_to([statistics.pvariance(values)]),
+          label='assert:PopulationVariance')
+      assert_that(
+          numbers | 'StandardDeviation' >> combine.StandardDeviation.Globally(),
+          equal_to([math.sqrt(statistics.variance(values))]),
+          label='assert:StandardDeviation')
+      assert_that(
+          numbers | 'PopulationStandardDeviation' >>
+          combine.StandardDeviation.Globally(sample=False),
+          equal_to([math.sqrt(statistics.pvariance(values))]),
+          label='assert:PopulationStandardDeviation')
+
+      pairs = pipeline | 'CreatePairs' >> Create([(1, 2), (2, 4), (3, 5),
+                                                  (4, 7)])
+      assert_that(
+          pairs | 'Covariance' >> combine.Covariance.Globally(),
+          equal_to([8 / 3]),
+          label='assert:Covariance')
+      assert_that(
+          pairs
+          | 'PopulationCovariance' >> combine.Covariance.Globally(sample=False),
+          equal_to([2.0]),
+          label='assert:PopulationCovariance')
+      expected = combine.RegressionResult(
+          4, 1.6, 0.5, 8 / math.sqrt(65), (8 / math.sqrt(65))**2, 2.5, 4.5)
+      assert_that(
+          pairs | 'LinearRegression' >> combine.LinearRegression.Globally(),
+          equal_to([expected]),
+          label='assert:LinearRegression')
+
+  def test_statistical_combiners_per_key(self):
+    values = [('a', 10.0), ('a', 20.0), ('a', 30.0), ('b', 2.0), ('b', 4.0),
+              ('b', 6.0), ('b', 8.0)]
+    with TestPipeline() as pipeline:
+      numbers = pipeline | 'CreateNumbers' >> Create(values)
+      assert_that(
+          numbers | 'VariancePerKey' >> combine.Variance.PerKey(),
+          equal_to([('a', statistics.variance([10.0, 20.0, 30.0])),
+                    ('b', statistics.variance([2.0, 4.0, 6.0, 8.0]))]),
+          label='assert:VariancePerKey')
+      assert_that(
+          numbers
+          | 'StandardDeviationPerKey' >> combine.StandardDeviation.PerKey(),
+          equal_to([('a', math.sqrt(statistics.variance([10.0, 20.0, 30.0]))),
+                    ('b', math.sqrt(statistics.variance([2.0, 4.0, 6.0,
+                                                         8.0])))]),
+          label='assert:StandardDeviationPerKey')
+
+      pairs = [('a', (1.0, 2.0)), ('a', (2.0, 4.0)), ('b', (1.0, 5.0)),
+               ('b', (2.0, 3.0))]
+      keyed_pairs = pipeline | 'CreatePairs' >> Create(pairs)
+      assert_that(
+          keyed_pairs | 'CovariancePerKey' >> combine.Covariance.PerKey(),
+          equal_to([('a', 1.0), ('b', -1.0)]),
+          label='assert:CovariancePerKey')
+      expected = [
+          ('a', combine.RegressionResult(2, 2.0, 0.0, 1.0, 1.0, 1.5, 3.0)),
+          ('b', combine.RegressionResult(2, -2.0, 7.0, -1.0, 1.0, 1.5, 4.0)),
+      ]
+      assert_that(
+          keyed_pairs
+          | 'LinearRegressionPerKey' >> combine.LinearRegression.PerKey(),
+          equal_to(expected),
+          label='assert:LinearRegressionPerKey')
+
+  def test_statistical_combiners_mapping_inputs(self):
+    rows = [
+        {
+            'spend': 10, 'revenue': 25
+        },
+        {
+            'spend': 20, 'revenue': 41
+        },
+        {
+            'spend': 30, 'revenue': 62
+        },
+    ]
+    with TestPipeline() as pipeline:
+      records = pipeline | 'CreateRecords' >> Create(rows)
+      expected = combine.RegressionResult(
+          3,
+          1.8500000000000003,
+          5.666666666666657,
+          0.9969702408703213,
+          0.9939496611810265,
+          20.0,
+          42.666666666666664)
+      assert_that(
+          records | 'LinearRegression' >> combine.LinearRegression.Globally(
+              x='spend', y='revenue'),
+          equal_to([expected]),
+          label='assert:LinearRegression')
+      assert_that(
+          records
+          | 'Covariance' >> combine.Covariance.Globally(x='spend', y='revenue'),
+          equal_to([185.00000000000003]),
+          label='assert:Covariance')
+
+  def test_statistical_combiners_empty_and_undefined(self):
+    variance = combine.VarianceCombineFn()
+    self.assertTrue(
+        math.isnan(variance.extract_output(variance.create_accumulator())))
+    covariance = combine.CovarianceCombineFn()
+    self.assertTrue(
+        math.isnan(covariance.extract_output(covariance.create_accumulator())))
+    regression = combine.LinearRegressionCombineFn()
+    result = regression.extract_output(regression.create_accumulator())
+    self.assertEqual(result.count, 0)
+    for field in (result.slope, result.intercept, result.r, result.r2):
+      self.assertTrue(math.isnan(field))
+    self.assertEqual(result.mean_x, 0.0)
+    self.assertEqual(result.mean_y, 0.0)
+
+    result = regression.extract_output(
+        regression.merge_accumulators([
+            regression.add_input(regression.create_accumulator(), (1.0, 2.0)),
+            regression.add_input(regression.create_accumulator(), (1.0, 3.0)),
+        ]))
+    self.assertEqual(result.count, 2)
+    self.assertEqual(result.mean_x, 1.0)
+    self.assertEqual(result.mean_y, 2.5)
+    for field in (result.slope, result.intercept, result.r, result.r2):
+      self.assertTrue(math.isnan(field))
+
+  def test_statistical_combiners_validation(self):
+    with self.assertRaises(ValueError):
+      combine.CovarianceCombineFn(x='x')
+    covariance = combine.CovarianceCombineFn(x='x', y='y')
+    with self.assertRaises(ValueError):
+      covariance.add_input(covariance.create_accumulator(), (1, 2))
+    with self.assertRaises(ValueError):
+      covariance.add_input(covariance.create_accumulator(), {'x': 1})
 
 
 if __name__ == '__main__':

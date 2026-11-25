@@ -22,11 +22,13 @@
 import copy
 import heapq
 import itertools
+import math
 import operator
 import random
 from collections.abc import Iterable
 from collections.abc import Sized
 from typing import Any
+from typing import NamedTuple
 from typing import TypeVar
 from typing import Union
 
@@ -55,6 +57,11 @@ __all__ = [
     'ToList',
     'ToSet',
     'Latest',
+    'Variance',
+    'StandardDeviation',
+    'Covariance',
+    'LinearRegression',
+    'RegressionResult',
     'CountCombineFn',
     'MeanCombineFn',
     'SampleCombineFn',
@@ -63,6 +70,10 @@ __all__ = [
     'ToListCombineFn',
     'ToSetCombineFn',
     'LatestCombineFn',
+    'VarianceCombineFn',
+    'StandardDeviationCombineFn',
+    'CovarianceCombineFn',
+    'LinearRegressionCombineFn',
 ]
 
 # Type variables
@@ -132,6 +143,301 @@ class MeanCombineFn(core.CombineFn):
     elif input_type is float:
       return cy_combiners.MeanFloatFn()
     return self
+
+
+class Variance(object):
+  """Combiners for computing the variance of numeric elements."""
+  class Globally(CombinerWithoutDefaults):
+    """Computes the variance of all elements in the PCollection."""
+    def __init__(self, sample=True, has_defaults=True):
+      super().__init__(has_defaults)
+      self.sample = sample
+
+    def expand(self, pcoll):
+      if self.has_defaults:
+        return pcoll | core.CombineGlobally(VarianceCombineFn(self.sample))
+      return (
+          pcoll
+          | core.CombineGlobally(VarianceCombineFn(
+              self.sample)).without_defaults())
+
+  @with_input_types(tuple[K, Union[float, int, np.number]])
+  @with_output_types(tuple[K, float])
+  class PerKey(ptransform.PTransform):
+    """Computes the variance of the values for each key."""
+    def __init__(self, sample=True):
+      self.sample = sample
+
+    def expand(self, pcoll):
+      return pcoll | core.CombinePerKey(VarianceCombineFn(self.sample))
+
+
+class StandardDeviation(object):
+  """Combiners for computing the standard deviation of numeric elements."""
+  class Globally(CombinerWithoutDefaults):
+    """Computes the standard deviation of all elements in the PCollection."""
+    def __init__(self, sample=True, has_defaults=True):
+      super().__init__(has_defaults)
+      self.sample = sample
+
+    def expand(self, pcoll):
+      if self.has_defaults:
+        return pcoll | core.CombineGlobally(
+            StandardDeviationCombineFn(self.sample))
+      return (
+          pcoll
+          | core.CombineGlobally(StandardDeviationCombineFn(
+              self.sample)).without_defaults())
+
+  @with_input_types(tuple[K, Union[float, int, np.number]])
+  @with_output_types(tuple[K, float])
+  class PerKey(ptransform.PTransform):
+    """Computes the standard deviation of the values for each key."""
+    def __init__(self, sample=True):
+      self.sample = sample
+
+    def expand(self, pcoll):
+      return pcoll | core.CombinePerKey(StandardDeviationCombineFn(self.sample))
+
+
+@with_input_types(Union[float, int, np.number])
+@with_output_types(float)
+class VarianceCombineFn(core.CombineFn):
+  """CombineFn for computing a numerically stable variance."""
+  def __init__(self, sample=True):
+    self.sample = sample
+
+  def create_accumulator(self):
+    return (0, 0.0, 0.0)
+
+  def add_input(self, accumulator, element):
+    count, mean, m2 = accumulator
+    element = float(element)
+    count += 1
+    delta = element - mean
+    mean += delta / count
+    m2 += delta * (element - mean)
+    return count, mean, m2
+
+  def merge_accumulators(self, accumulators):
+    count = 0
+    mean = 0.0
+    m2 = 0.0
+    for other_count, other_mean, other_m2 in accumulators:
+      if not other_count:
+        continue
+      if not count:
+        count, mean, m2 = other_count, other_mean, other_m2
+        continue
+      total = count + other_count
+      delta = other_mean - mean
+      mean += delta * other_count / total
+      m2 += other_m2 + delta * delta * count * other_count / total
+      count = total
+    return count, mean, m2
+
+  def extract_output(self, accumulator):
+    count, _, m2 = accumulator
+    denominator = count - 1 if self.sample else count
+    if denominator <= 0:
+      return float('NaN')
+    return float(max(m2, 0.0) / denominator)
+
+
+class StandardDeviationCombineFn(VarianceCombineFn):
+  """CombineFn for computing a numerically stable standard deviation."""
+  def extract_output(self, accumulator):
+    return math.sqrt(super().extract_output(accumulator))
+
+
+class Covariance(object):
+  """Combiners for computing covariance between pairs of numeric values."""
+  class Globally(CombinerWithoutDefaults):
+    """Computes the covariance of all input pairs."""
+    def __init__(self, sample=True, x=None, y=None, has_defaults=True):
+      super().__init__(has_defaults)
+      self.sample = sample
+      self.x = x
+      self.y = y
+
+    def expand(self, pcoll):
+      combine_fn = CovarianceCombineFn(self.sample, self.x, self.y)
+      if self.has_defaults:
+        return pcoll | core.CombineGlobally(combine_fn)
+      return pcoll | core.CombineGlobally(combine_fn).without_defaults()
+
+  @with_input_types(tuple[K, Any])
+  @with_output_types(tuple[K, float])
+  class PerKey(ptransform.PTransform):
+    """Computes the covariance of the value pairs for each key."""
+    def __init__(self, sample=True, x=None, y=None):
+      self.sample = sample
+      self.x = x
+      self.y = y
+
+    def expand(self, pcoll):
+      return (
+          pcoll
+          | core.CombinePerKey(
+              CovarianceCombineFn(self.sample, self.x, self.y)))
+
+
+@with_input_types(Any)
+@with_output_types(float)
+class CovarianceCombineFn(core.CombineFn):
+  """CombineFn for computing a numerically stable covariance."""
+  def __init__(self, sample=True, x=None, y=None):
+    if (x is None) != (y is None):
+      raise ValueError('x and y must be specified together')
+    self.sample = sample
+    self.x = x
+    self.y = y
+
+  def _extract_values(self, element):
+    if self.x is None:
+      try:
+        x_value, y_value = element
+      except (TypeError, ValueError) as e:
+        raise ValueError(
+            'Covariance input must be a pair or a mapping with x and y '
+            'column names.') from e
+    else:
+      try:
+        x_value = element[self.x]
+        y_value = element[self.y]
+      except (KeyError, TypeError, IndexError) as e:
+        raise ValueError(
+            'Covariance input must contain columns %r and %r.' %
+            (self.x, self.y)) from e
+    return x_value, y_value
+
+  def create_accumulator(self):
+    return (0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+  def add_input(self, accumulator, element):
+    count, mean_x, mean_y, m2_x, m2_y, covariance = accumulator
+    x_value, y_value = self._extract_values(element)
+    x_value = float(x_value)
+    y_value = float(y_value)
+    count += 1
+    delta_x = x_value - mean_x
+    delta_y = y_value - mean_y
+    mean_x += delta_x / count
+    mean_y += delta_y / count
+    m2_x += delta_x * (x_value - mean_x)
+    m2_y += delta_y * (y_value - mean_y)
+    covariance += delta_x * (y_value - mean_y)
+    return count, mean_x, mean_y, m2_x, m2_y, covariance
+
+  def merge_accumulators(self, accumulators):
+    count = 0
+    mean_x = 0.0
+    mean_y = 0.0
+    m2_x = 0.0
+    m2_y = 0.0
+    covariance = 0.0
+    for other in accumulators:
+      other_count, other_mean_x, other_mean_y, other_m2_x, other_m2_y, other_cov = other
+      if not other_count:
+        continue
+      if not count:
+        count, mean_x, mean_y, m2_x, m2_y, covariance = other
+        continue
+      total = count + other_count
+      delta_x = other_mean_x - mean_x
+      delta_y = other_mean_y - mean_y
+      factor = count * other_count / total
+      mean_x += delta_x * other_count / total
+      mean_y += delta_y * other_count / total
+      m2_x += other_m2_x + delta_x * delta_x * factor
+      m2_y += other_m2_y + delta_y * delta_y * factor
+      covariance += other_cov + delta_x * delta_y * factor
+      count = total
+    return count, mean_x, mean_y, m2_x, m2_y, covariance
+
+  def extract_output(self, accumulator):
+    count, _, _, _, _, covariance = accumulator
+    denominator = count - 1 if self.sample else count
+    if denominator <= 0:
+      return float('NaN')
+    return float(covariance / denominator)
+
+
+class RegressionResult(NamedTuple):
+  """Result of an ordinary least-squares linear regression."""
+  count: int
+  slope: float
+  intercept: float
+  r: float
+  r2: float
+  mean_x: float
+  mean_y: float
+
+
+class LinearRegression(object):
+  """Combiners for ordinary least-squares linear regression."""
+  class Globally(CombinerWithoutDefaults):
+    """Computes a linear regression over all input pairs."""
+    def __init__(self, x=None, y=None, has_defaults=True):
+      super().__init__(has_defaults)
+      self.x = x
+      self.y = y
+
+    def expand(self, pcoll):
+      combine_fn = LinearRegressionCombineFn(self.x, self.y)
+      if self.has_defaults:
+        return pcoll | core.CombineGlobally(combine_fn)
+      return pcoll | core.CombineGlobally(combine_fn).without_defaults()
+
+  @with_input_types(tuple[K, Any])
+  @with_output_types(tuple[K, RegressionResult])
+  class PerKey(ptransform.PTransform):
+    """Computes a linear regression over the value pairs for each key."""
+    def __init__(self, x=None, y=None):
+      self.x = x
+      self.y = y
+
+    def expand(self, pcoll):
+      return (
+          pcoll
+          | core.CombinePerKey(LinearRegressionCombineFn(self.x, self.y)))
+
+
+@with_input_types(Any)
+@with_output_types(RegressionResult)
+class LinearRegressionCombineFn(CovarianceCombineFn):
+  """CombineFn for ordinary least-squares linear regression."""
+  def __init__(self, x=None, y=None):
+    super().__init__(x=x, y=y)
+
+  def extract_output(self, accumulator):
+    count, mean_x, mean_y, m2_x, m2_y, covariance = accumulator
+    m2_x = max(m2_x, 0.0)
+    m2_y = max(m2_y, 0.0)
+    if count < 2 or m2_x == 0:
+      return RegressionResult(
+          count,
+          float('NaN'),
+          float('NaN'),
+          float('NaN'),
+          float('NaN'),
+          mean_x,
+          mean_y)
+    slope = covariance / m2_x
+    intercept = mean_y - slope * mean_x
+    if m2_y == 0:
+      correlation = float('NaN')
+    else:
+      correlation = covariance / math.sqrt(m2_x * m2_y)
+      correlation = max(-1.0, min(1.0, correlation))
+    return RegressionResult(
+        count,
+        slope,
+        intercept,
+        correlation,
+        correlation * correlation,
+        mean_x,
+        mean_y)
 
 
 class Count(object):
