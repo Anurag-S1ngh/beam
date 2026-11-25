@@ -19,6 +19,8 @@ package org.apache.beam.runners.core.triggers;
 
 import static org.apache.beam.vendor.guava.v32_1_2_jre.com.google.common.base.Preconditions.checkArgument;
 import static org.apache.beam.vendor.guava.v32_1_2_jre.com.google.common.base.Preconditions.checkNotNull;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -180,6 +182,16 @@ public class TriggerStateMachineTester<InputT, W extends BoundedWindow> {
   /** Retrieves the next timer for this time domain, if any, for use in assertions. */
   public @Nullable Instant getNextTimer(TimeDomain domain) {
     return timerInternals.getNextTimer(domain);
+  }
+
+  /** Asserts that the next timer in the given time domain fires at the expected time. */
+  public void assertTimerSet(TimeDomain domain, Instant expected) {
+    assertEquals("Unexpected next timer for " + domain, expected, getNextTimer(domain));
+  }
+
+  /** Asserts that there is no timer in the given time domain. */
+  public void assertNoTimerSet(TimeDomain domain) {
+    assertNull("Unexpected timer for " + domain, getNextTimer(domain));
   }
 
   /**

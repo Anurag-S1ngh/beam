@@ -22,6 +22,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.apache.beam.runners.core.triggers.TriggerStateMachineTester.SimpleTriggerStateMachineTester;
+import org.apache.beam.sdk.state.TimeDomain;
 import org.apache.beam.sdk.transforms.windowing.FixedWindows;
 import org.apache.beam.sdk.transforms.windowing.IntervalWindow;
 import org.apache.beam.sdk.transforms.windowing.Sessions;
@@ -52,6 +53,7 @@ public class AfterProcessingTimeStateMachineTest {
 
     // Timer at 15
     tester.injectElements(1);
+    tester.assertTimerSet(TimeDomain.PROCESSING_TIME, new Instant(15));
     IntervalWindow firstWindow = new IntervalWindow(new Instant(0), new Instant(10));
     tester.advanceProcessingTime(new Instant(12));
     assertFalse(tester.shouldFire(firstWindow));

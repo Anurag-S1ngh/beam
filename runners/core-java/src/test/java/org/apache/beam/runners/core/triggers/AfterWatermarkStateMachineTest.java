@@ -17,9 +17,6 @@
  */
 package org.apache.beam.runners.core.triggers;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -113,10 +110,10 @@ public class AfterWatermarkStateMachineTest {
         TriggerStateMachineTester.forTrigger(
             AfterWatermarkStateMachine.pastEndOfWindow(), FixedWindows.of(Duration.millis(100)));
 
-    assertThat(tester.getNextTimer(TimeDomain.EVENT_TIME), nullValue());
+    tester.assertNoTimerSet(TimeDomain.EVENT_TIME);
     injectElements(1);
     IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
-    assertThat(tester.getNextTimer(TimeDomain.EVENT_TIME), equalTo(window.maxTimestamp()));
+    tester.assertTimerSet(TimeDomain.EVENT_TIME, window.maxTimestamp());
   }
 
   @Test
@@ -126,10 +123,10 @@ public class AfterWatermarkStateMachineTest {
             AfterWatermarkStateMachine.pastEndOfWindow().withEarlyFirings(NeverStateMachine.ever()),
             FixedWindows.of(Duration.millis(100)));
 
-    assertThat(tester.getNextTimer(TimeDomain.EVENT_TIME), nullValue());
+    tester.assertNoTimerSet(TimeDomain.EVENT_TIME);
     injectElements(1);
     IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
-    assertThat(tester.getNextTimer(TimeDomain.EVENT_TIME), equalTo(window.maxTimestamp()));
+    tester.assertTimerSet(TimeDomain.EVENT_TIME, window.maxTimestamp());
   }
 
   @Test
