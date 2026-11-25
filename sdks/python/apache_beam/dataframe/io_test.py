@@ -23,6 +23,7 @@ import tempfile
 import typing
 import unittest
 from datetime import datetime
+from datetime import timezone
 from io import BytesIO
 from io import StringIO
 
@@ -474,14 +475,16 @@ X     , c1, c2
 
     first_window_files = (
         f'{output}out.csv-'
-        f'{datetime.utcfromtimestamp(0).isoformat().replace(":", "_")}*')
+        f'{datetime.fromtimestamp(0, tz=timezone.utc).replace(tzinfo=None).isoformat().replace(":", "_")}*'
+    )
     self.assertCountEqual(
         ['timestamp,value'] + [f'{i},{i % 3}' for i in range(10)],
         set(self.read_all_lines(first_window_files, delete=True)))
 
     second_window_files = (
         f'{output}out.csv-'
-        f'{datetime.utcfromtimestamp(10).isoformat().replace(":", "_")}*')
+        f'{datetime.fromtimestamp(10, tz=timezone.utc).replace(tzinfo=None).isoformat().replace(":", "_")}*'
+    )
     self.assertCountEqual(
         ['timestamp,value'] + [f'{i},{i%3}' for i in range(10, 20)],
         set(self.read_all_lines(second_window_files, delete=True)))

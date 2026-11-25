@@ -66,7 +66,8 @@ class TypesTest(unittest.TestCase):
     exclude_from_indexes = ('datetime', 'key')
     e = Entity(k, exclude_from_indexes=exclude_from_indexes)
     properties = {
-        'datetime': datetime.datetime.utcnow(),
+        'datetime': datetime.datetime.now(
+            datetime.timezone.utc).replace(tzinfo=None),
         'key_ref': Key(['kind2', 1235]),
         'bool': True,
         'float': 1.21,

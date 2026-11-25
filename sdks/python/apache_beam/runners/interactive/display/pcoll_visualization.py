@@ -477,8 +477,8 @@ def event_time_formatter(event_time_us):
   to_tz = options.display_timezone
   try:
     return (
-        datetime.datetime.utcfromtimestamp(event_time_us / 1000000).replace(
-            tzinfo=tz.tzutc()).astimezone(to_tz).strftime(
+        datetime.datetime.fromtimestamp(
+            event_time_us / 1000000, tz=tz.tzutc()).astimezone(to_tz).strftime(
                 options.display_timestamp_format))
   except ValueError:
     if event_time_us < 0:

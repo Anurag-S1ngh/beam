@@ -84,7 +84,7 @@ from apache_beam.options.pipeline_options import SetupOptions
 def str2timestamp(s, fmt='%Y-%m-%d-%H-%M'):
   """Converts a string into a unix timestamp."""
   dt = datetime.strptime(s, fmt)
-  epoch = datetime.utcfromtimestamp(0)
+  epoch = datetime(1970, 1, 1)
   return (dt - epoch).total_seconds()
 
 

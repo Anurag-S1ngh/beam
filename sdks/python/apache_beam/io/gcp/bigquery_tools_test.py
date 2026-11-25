@@ -391,6 +391,13 @@ class TestBigQueryEndpoint(unittest.TestCase):
 
 @unittest.skipIf(HttpError is None, 'GCP dependencies are not installed')
 class TestBigQueryWrapper(unittest.TestCase):
+  def test_convert_timestamp_cell_value(self):
+    field = bigquery.TableFieldSchema(name='timestamp', type='TIMESTAMP')
+    wrapper = BigQueryWrapper(client=mock.Mock())
+    self.assertEqual(
+        wrapper._convert_cell_value_to_dict('1478134176.985864', field),
+        '2016-11-03 00:49:36.985864 UTC')
+
   def test_delete_non_existing_dataset(self):
     client = mock.Mock()
     client.datasets.Delete.side_effect = HttpError(

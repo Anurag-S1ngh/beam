@@ -1547,7 +1547,7 @@ class JdbcTimeType(LogicalType[datetime.time, MillisInstant, str]):
   def to_representation_type(self, value: datetime.time) -> Timestamp:
     return Timestamp.from_utc_datetime(
         datetime.datetime.combine(
-            datetime.datetime.utcfromtimestamp(0),
+            datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc),
             value,
             tzinfo=datetime.timezone.utc))
 

@@ -798,6 +798,16 @@ class SchemaTest(unittest.TestCase):
                                                      ('unique', Any)])
 
 
+class JdbcTimeTypeTest(unittest.TestCase):
+  def test_round_trip(self):
+    logical_type = schemas.JdbcTimeType()
+    value = datetime.time(12, 34, 56, 123000)
+    self.assertEqual(
+        logical_type.to_language_type(
+            logical_type.to_representation_type(value)),
+        value)
+
+
 class ParameterizedTimestampTest(unittest.TestCase):
   def test_urn(self):
     self.assertEqual(

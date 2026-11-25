@@ -1595,11 +1595,9 @@ class BigQueryWrapper(object):
       # Input: "1.23" --> Output: 1.23
       return float(value)
     elif field.type == 'TIMESTAMP':
-      # The UTC should come from the timezone library but this is a known
-      # issue in python 2.7 so we'll just hardcode it as we're reading using
-      # utcfromtimestamp.
       # Input: 1478134176.985864 --> Output: "2016-11-03 00:49:36.985864 UTC"
-      dt = datetime.datetime.utcfromtimestamp(float(value))
+      dt = datetime.datetime.fromtimestamp(
+          float(value), tz=datetime.timezone.utc)
       return dt.strftime('%Y-%m-%d %H:%M:%S.%f UTC')
     elif field.type == 'BYTES':
       # Input: "YmJi" --> Output: "YmJi"
