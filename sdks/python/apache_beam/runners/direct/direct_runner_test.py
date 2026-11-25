@@ -17,6 +17,9 @@
 
 # pytype: skip-file
 
+import os
+import pstats
+import tempfile
 import threading
 import unittest
 from collections import defaultdict
@@ -31,6 +34,7 @@ from apache_beam.metrics.execution import MetricResult
 from apache_beam.metrics.metric import Metrics
 from apache_beam.metrics.metric import MetricsFilter
 from apache_beam.metrics.metricbase import MetricName
+from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.pipeline import Pipeline
 from apache_beam.runners import DirectRunner
 from apache_beam.runners import TestDirectRunner
@@ -165,6 +169,27 @@ class BundleBasedRunnerTest(unittest.TestCase):
   def test_impulse(self):
     with test_pipeline.TestPipeline(runner='BundleBasedDirectRunner') as p:
       assert_that(p | beam.Impulse(), equal_to([b'']))
+
+  def test_profiling(self):
+    with tempfile.TemporaryDirectory() as profile_location:
+      options = PipelineOptions([
+          '--profile_cpu',
+          '--profile_location=' + profile_location,
+          '--profile_sample_rate=1.0',
+      ])
+      with beam.Pipeline(runner='BundleBasedDirectRunner',
+                         options=options) as pipeline:
+        _ = pipeline | beam.Create([1, 2, 3])
+
+      profile_dir = os.path.join(profile_location, 'cpu_profile')
+      self.assertTrue(os.path.isdir(profile_dir))
+      self.assertTrue(os.listdir(profile_dir))
+      profile_path = os.path.join(profile_dir, os.listdir(profile_dir)[0])
+      stats = pstats.Stats(profile_path)
+      self.assertTrue(
+          any(
+              'transform_evaluator.py' in filename
+              for filename, _, _ in stats.stats))
 
 
 class DirectRunnerRetryTests(unittest.TestCase):

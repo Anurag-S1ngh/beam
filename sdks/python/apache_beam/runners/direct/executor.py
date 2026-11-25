@@ -23,6 +23,7 @@ import collections
 import itertools
 import logging
 import queue
+import sys
 import threading
 import traceback
 from typing import TYPE_CHECKING
@@ -61,10 +62,14 @@ class _ExecutorService(object):
     TIMEOUT = 5
 
     def __init__(
-        self, queue: 'queue.Queue[_ExecutorService.CallableTask]', index):
+        self,
+        queue: 'queue.Queue[_ExecutorService.CallableTask]',
+        index,
+        profiler_factory=None):
       super().__init__()
       self.queue = queue
       self._index = index
+      self._profiler_factory = profiler_factory
       self._default_name = 'ExecutorServiceWorker-' + str(index)
       self._update_name()
       self.shutdown_requested = False
@@ -93,25 +98,38 @@ class _ExecutorService(object):
     def run(self):
       state_sampler = statesampler.StateSampler('', counters.CounterFactory())
       statesampler.set_current_tracker(state_sampler)
-      while not self.shutdown_requested:
-        task = self._get_task_or_none()
-        if task:
-          try:
-            if not self.shutdown_requested:
-              self._update_name(task)
-              task.call(state_sampler)
-              self._update_name()
-          finally:
-            self.queue.task_done()
+      profiler = (
+          self._profiler_factory('direct-worker-%d' % self._index)
+          if self._profiler_factory else None)
+      if profiler:
+        profiler.__enter__()
+      try:
+        while not self.shutdown_requested:
+          task = self._get_task_or_none()
+          if task:
+            try:
+              if not self.shutdown_requested:
+                self._update_name(task)
+                task.call(state_sampler)
+                self._update_name()
+            finally:
+              self.queue.task_done()
+      except BaseException:
+        if profiler:
+          profiler.__exit__(*sys.exc_info())
+        raise
+      else:
+        if profiler:
+          profiler.__exit__(None, None, None)
 
     def shutdown(self):
       self.shutdown_requested = True
 
-  def __init__(self, num_workers):
+  def __init__(self, num_workers, profiler_factory=None):
     self.queue: queue.Queue[_ExecutorService.CallableTask] = queue.Queue()
     self.workers = [
-        _ExecutorService._ExecutorServiceWorker(self.queue, i)
-        for i in range(num_workers)
+        _ExecutorService._ExecutorServiceWorker(
+            self.queue, i, profiler_factory) for i in range(num_workers)
     ]
     self.shutdown_requested = False
 
@@ -427,9 +445,10 @@ class _ExecutorServiceParallelExecutor(object):
       self,
       value_to_consumers,
       transform_evaluator_registry,
-      evaluation_context: 'EvaluationContext'):
+      evaluation_context: 'EvaluationContext',
+      profiler_factory=None):
     self.executor_service = _ExecutorService(
-        _ExecutorServiceParallelExecutor.NUM_WORKERS)
+        _ExecutorServiceParallelExecutor.NUM_WORKERS, profiler_factory)
     self.transform_executor_services = _TransformExecutorServices(
         self.executor_service)
     self.value_to_consumers = value_to_consumers

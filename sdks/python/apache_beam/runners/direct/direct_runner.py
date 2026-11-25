@@ -34,6 +34,7 @@ from apache_beam import coders
 from apache_beam import typehints
 from apache_beam.internal.util import ArgumentPlaceholder
 from apache_beam.options.pipeline_options import DirectOptions
+from apache_beam.options.pipeline_options import ProfilingOptions
 from apache_beam.options.pipeline_options import StandardOptions
 from apache_beam.options.value_provider import RuntimeValueProvider
 from apache_beam.pvalue import PCollection
@@ -52,6 +53,7 @@ from apache_beam.transforms.ptransform import PTransform
 from apache_beam.transforms.timeutil import TimeDomain
 from apache_beam.typehints import trivial_inference
 from apache_beam.utils.interactive_utils import is_in_ipython
+from apache_beam.utils.profiler import Profile
 
 __all__ = ['BundleBasedDirectRunner', 'DirectRunner', 'SwitchingDirectRunner']
 
@@ -610,7 +612,9 @@ class BundleBasedDirectRunner(PipelineRunner):
     executor = Executor(
         self.consumer_tracking_visitor.value_to_consumers,
         TransformEvaluatorRegistry(evaluation_context),
-        evaluation_context)
+        evaluation_context,
+        profiler_factory=Profile.factory_from_options(
+            options.view_as(ProfilingOptions)))
     # DirectRunner does not support injecting
     # PipelineOptions values at runtime
     RuntimeValueProvider.set_runtime_options({})
